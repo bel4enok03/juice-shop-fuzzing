@@ -1,0 +1,210 @@
+name: Juice Shop Security Fuzzing
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # Allows manual trigger
+
+jobs:
+  security-fuzzing:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    
+    - name: Clone and setup Juice Shop
+      run: |
+        git clone https://github.com/juice-shop/juice-shop.git
+        cd juice-shop
+        npm install --production
+    
+    - name: Start Juice Shop
+      run: |
+        cd juice-shop
+        npm start &
+        echo "Waiting for Juice Shop to start..."
+        sleep 30
+        # Check if service is running
+        curl -f http://localhost:3000 || (echo "Juice Shop failed to start" && exit 1)
+        echo "Juice Shop is running!"
+    
+    - name: Install ffuf
+      run: |
+        wget https://github.com/ffuf/ffuf/releases/download/v2.1.0/ffuf_2.1.0_linux_amd64.tar.gz
+        tar -xzf ffuf_2.1.0_linux_amd64.tar.gz
+        chmod +x ffuf
+        sudo mv ffuf /usr/local/bin/
+        ffuf -version
+    
+    - name: Run Python fuzzing script
+      run: |
+        echo "Starting Python fuzzing..."
+        python fuzz_script.py http://localhost:3000
+        echo "Python fuzzing completed"
+    
+    - name: Run ffuf against login endpoint
+      run: |
+        echo "Starting ffuf fuzzing..."
+        
+        # Create ffuf compatible request data
+        echo '{"email":"FUZZ","password":"test123"}' > request_template.json
+        
+        # Run ffuf with our payloads
+        ffuf -w sql_payloads.txt:FUZZ \
+             -u http://localhost:3000/rest/user/login \
+             -X POST \
+             -H "Content-Type: application/json" \
+             -d @request_template.json \
+             -mc all \
+             -fs 26 \
+             -o ffuf_results.json \
+             -of json \
+             -t 1 \
+             -p 0.1-0.5 \
+             -v
+        
+        echo "ffuf fuzzing completed"
+    
+    - name: Analyze results
+      run: |
+        echo "=== FUZZING RESULTS ANALYSIS ==="
+        
+        # Check Python results
+        if [ -f "fuzz_results.json" ]; then
+          echo "Python fuzzing results found:"
+          python -c "
+import json
+try:
+    with open('fuzz_results.json', 'r') as f:
+        data = json.load(f)
+    print(f'Total tests: {data[\"summary\"][\"total_tests\"]}')
+    print(f'Potential vulnerabilities: {data[\"summary\"][\"potential_vulnerabilities\"]}')
+    print(f'Authentication bypasses: {data[\"summary\"][\"authentication_bypasses\"]}')
+    
+    if data['summary']['potential_vulnerabilities'] > 0:
+        print('\nPOTENTIAL VULNERABILITIES:')
+        for vuln in data['vulnerabilities']:
+            print(f'  - {vuln[\"payload\"][:50]}... (Field: {vuln[\"field\"]})')
+    
+    if data['summary']['authentication_bypasses'] > 0:
+        print('\nAUTHENTICATION BYPASSES:')
+        for bypass in data['auth_bypasses']:
+            print(f'  - {bypass[\"payload\"]}')
+except Exception as e:
+    print(f'Error analyzing Python results: {e}')
+"
+        else
+          echo "No Python results found"
+        fi
+        
+        # Check ffuf results
+        if [ -f "ffuf_results.json" ]; then
+          echo -e "\nffuf results found:"
+          python -c "
+import json
+try:
+    with open('ffuf_results.json', 'r') as f:
+        data = json.load(f)
+    
+    results = data.get('results', [])
+    print(f'ffuf total results: {len(results)}')
+    
+    # Look for interesting responses
+    interesting = []
+    for result in results:
+        status = result.get('status', 0)
+        length = result.get('length', 0)
+        words = result.get('words', 0)
+        
+        # Flag potentially interesting responses
+        if status == 200 or status == 500 or length > 100:
+            interesting.append(result)
+    
+    if interesting:
+        print(f'Interesting responses: {len(interesting)}')
+        for res in interesting[:5]:  # Show first 5
+            payload = res.get('input', {}).get('FUZZ', 'unknown')
+            print(f'  - Payload: {payload[:50]}... Status: {res.get(\"status\")} Length: {res.get(\"length\")}')
+    else:
+        print('No obviously interesting responses found')
+        
+except Exception as e:
+    print(f'Error analyzing ffuf results: {e}')
+"
+        else
+          echo "No ffuf results found"
+        fi
+    
+    - name: Create security report bundle
+      run: |
+        echo "Creating security reports bundle..."
+        mkdir -p security-reports
+        
+        # Copy results
+        [ -f "fuzz_results.json" ] && cp fuzz_results.json security-reports/
+        [ -f "ffuf_results.json" ] && cp ffuf_results.json security-reports/
+        [ -f "request_template.json" ] && cp request_template.json security-reports/
+        
+        # Create summary report
+        cat > security-reports/summary.md << 'EOF'
+# Juice Shop Security Fuzzing Report
+
+## Overview
+This report contains the results of SQL injection fuzzing against OWASP Juice Shop.
+
+## Files in this bundle:
+- `fuzz_results.json` - Python fuzzing script results
+- `ffuf_results.json` - ffuf tool results  
+- `request_template.json` - Request template used for fuzzing
+- `summary.md` - This summary file
+
+## Analysis
+The fuzzing targeted the `/rest/user/login` endpoint with SQL injection payloads specifically crafted for SQLite databases.
+
+## Important Note
+This is an educational exercise using the intentionally vulnerable OWASP Juice Shop application.
+Do not use these techniques against applications without explicit permission.
+EOF
+        
+        # Create archive
+        tar -czf security-reports-bundle.tar.gz security-reports/
+        
+        echo "Security reports bundle created: security-reports-bundle.tar.gz"
+        ls -la security-reports/
+    
+    - name: Upload security reports
+      uses: actions/upload-artifact@v4
+      with:
+        name: security-reports-bundle
+        path: security-reports-bundle.tar.gz
+        retention-days: 30
+    
+    - name: Upload individual results
+      uses: actions/upload-artifact@v4
+      with:
+        name: fuzzing-results
+        path: |
+          fuzz_results.json
+          ffuf_results.json
+          security-reports/
+        retention-days: 30
+      if: always()
